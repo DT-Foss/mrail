@@ -47,10 +47,10 @@ version changes.
 
 ## Papers
 
-- D. T. Foss, *Compute Once: Constant-State Language Models Make Answers Reusable and Agents Cheap* (2026).
+- D. T. Foss, *Compute Once: Constant-State Language Models Make Answers Reusable and Agents Cheap* (2026), [doi:10.13140/RG.2.2.18140.35202](https://doi.org/10.13140/RG.2.2.18140.35202).
 - D. T. Foss, *The Holographic Causal Graph Machine: Compiling a Pretrained Transformer into a Constant-State Model
-  without Training* (2026).
-- D. T. Foss, *No GPU, No KV Cache: A Constant-State Language Model on the Neural Engine of a Mac mini* (2026).
+  without Training* (2026), [doi:10.13140/RG.2.2.28206.68167](https://doi.org/10.13140/RG.2.2.28206.68167).
+- D. T. Foss, *No GPU, No KV Cache: A Constant-State Language Model on the Neural Engine of a Mac mini* (2026), [doi:10.13140/RG.2.2.31562.12484](https://doi.org/10.13140/RG.2.2.31562.12484).
 
 Models and maps: [huggingface.co/tfwnotops](https://huggingface.co/tfwnotops).
 
