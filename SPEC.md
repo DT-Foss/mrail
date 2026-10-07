@@ -50,6 +50,23 @@ values, shape `[heads, rows, dim]`) the payload holds a packed bitmask of change
 the changed rows only; all other arrays are stored whole. `"chain"` counts deltas since the last full anchor; writers
 store a full anchor once the chain would reach 8.
 
+### kind 5: TRACK (a run whose context lives elsewhere)
+
+```
+ctx_len:u32  ctx_hash:8  src_len:u16  src:utf8[src_len]  n_ops:u32  op*
+op = 0 LIT   count:u16  tokens:u32[count]
+     1 COPY  pos:u32  len:u16
+```
+
+A run whose context is not stored: `ctx_hash` is the prefix hash `h_{ctx_len}` of the whole context, `src` names where
+the context lives (for example an eval item `ruler16/1048576/niah_multikey_3#5`, a document id), and the model's own
+output is coded against the context: `COPY` repeats `len` tokens of the context from `pos`, `LIT` gives tokens. A
+runtime serves the decoded output as the model's answer only to a context whose own hash chain ends in `ctx_hash`;
+it decodes the copies against that context. A run over 10^6 context tokens with a short answer costs some tens of
+bytes instead of 4 MB; maps of benchmark runs, of documents held elsewhere, of repositories, are a few KB. Tracks
+answer the whole context exactly (semantics 1); a runtime that needs prefixes of the context (restarts, drafts)
+resolves `src` and checks it against `ctx_hash`. Readers that do not know kind 5 skip it.
+
 ### kind 3: USE
 
 ```

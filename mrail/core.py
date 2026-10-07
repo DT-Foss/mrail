@@ -37,7 +37,8 @@ import numpy as np
 from .drafts import DraftRail as MoebiusRail
 
 MAGIC = b"MRAIL\x03\x00\x00"
-K_SESSION, K_ANCHOR, K_USE, K_DELTA = 1, 2, 3, 4
+K_SESSION, K_ANCHOR, K_USE, K_DELTA, K_TRACK = 1, 2, 3, 4, 5
+OP_LIT, OP_COPY = 0, 1
 ROW_FIELDS = ("_frontier_keys", "_frontier_values", "_root_keys", "_root_values")   # runtime-specific; override per model
 MAX_CHAIN = 8
 
@@ -53,10 +54,16 @@ def chain(tokens, h0: bytes = b"\x00" * 8):
 
 
 class MapFile:
-    def __init__(self, path, nmax_rail: int = 6, limit: int | None = None, extra=()):
+    def __init__(self, path, nmax_rail: int = 6, limit: int | None = None, extra=(), stride: int = 1,
+                 rail_prompts: bool = True):
         """limit: index only the first `limit` rides. extra: [(path, limit)] of foreign maps whose rides are
-        loaded as draft track only (never emitted as the model's own continuation, no anchors)."""
+        loaded as draft track only (never emitted as the model's own continuation, no anchors).
+        stride: index the prompt part of a ride at every `stride`-th prefix only (plus the prompt end and every
+        position of the model's own output): long-context rides (benchmarks of 10^5..10^6 tokens) cost
+        n / stride hash entries instead of n; the common prefix is then found to a multiple of `stride` or exactly at
+        a prompt end, exact answers are unchanged. rail_prompts=False keeps only the answers on the draft rail."""
         self.path = Path(path)
+        self.stride, self.rail_prompts = max(1, int(stride)), rail_prompts
         self.sessions: list[list[int]] = []
         self.pos_hash: dict[bytes, tuple[int, int]] = {}      # prefix hash -> (sid of the longest ride, P)
         self.gen_hash: dict[bytes, int] = {}                   # prefix hash -> sid whose continuation there is model output
@@ -65,6 +72,7 @@ class MapFile:
         self.use: dict[bytes, int] = {}
         self._cache: dict[bytes, tuple] = {}                  # decoded anchors (small LRU)
         self.rail = MoebiusRail(None, nmax=nmax_rail)         # n-gram drafts over all rides (Möbius-Rail)
+        self.tracks: dict[int, tuple] = {}                     # sid -> (ctx_len, ctx hash, src, answer ops)
         self._mm = None
         self.limit = limit
         for xp, xl in extra:
@@ -103,6 +111,10 @@ class MapFile:
                 self.anchors.setdefault(h, (p + 24, n - 24, P, parent))
             elif kind == K_USE:
                 h = bytes(mm[p:p + 8]); self.use[h] = self.use.get(h, 0) + struct.unpack_from("<I", mm, p + 8)[0]
+            elif kind == K_TRACK:
+                if self.limit is None or n_own < self.limit:
+                    self._index_track(*_unpack_track(bytes(mm[p:p + n])))
+                n_own += 1
             off = p + n
 
     def _load_foreign(self, path: Path, limit):
@@ -141,15 +153,18 @@ class MapFile:
         self.sessions.append(toks)
         self.gen_start.append(gen)
         hs = chain(toks)
+        st = self.stride
         for P in range(1, len(toks) + 1):
+            if st > 1 and P < gen and P % st:
+                continue
             cur = self.pos_hash.get(hs[P])
-            if cur is None or len(self.sessions[cur[0]]) < len(toks):
+            if cur is None or self._run_len(cur[0]) < len(toks):
                 self.pos_hash[hs[P]] = (sid, P)
             if P >= gen and P < len(toks):
                 g = self.gen_hash.get(hs[P])
-                if g is None or len(self.sessions[g]) < len(toks):
+                if g is None or self._run_len(g) < len(toks):
                     self.gen_hash[hs[P]] = sid
-        self.rail.add(toks)
+        self.rail.add(toks if self.rail_prompts else toks[max(0, gen - self.rail.nmax):])
         return sid
 
     def add_session(self, toks, gen_start: int) -> int:
@@ -157,6 +172,39 @@ class MapFile:
         sid = self._index_session(toks, gen_start)
         self._append(K_SESSION, struct.pack("<III", sid, len(toks), gen_start) + np.asarray(toks, np.uint32).tobytes())
         return sid
+
+    def _run_len(self, sid):
+        s_ = self.sessions[sid]
+        return len(s_) if s_ is not None else self.tracks[sid][0] + 1
+
+    # ---------- tracks: runs whose context lives elsewhere ----------
+    def _index_track(self, ctx_len, h_ctx, src, ops):
+        sid = len(self.sessions)
+        self.sessions.append(None)                             # the context is not stored: src names it, h_ctx checks it
+        self.gen_start.append(ctx_len)
+        self.tracks[sid] = (ctx_len, h_ctx, src, ops)
+        cur = self.pos_hash.get(h_ctx)
+        if cur is None:
+            self.pos_hash[h_ctx] = (sid, ctx_len)
+        self.gen_hash.setdefault(h_ctx, sid)
+        return sid
+
+    def add_track(self, ctx, answer, src: str = "", min_copy: int = 4) -> int:
+        """A run whose context is referenced, not stored (an eval item, a document held elsewhere): the chained hash
+        of the context identifies it, `src` says where it lives, and the model's answer is coded against the context
+        itself - copies of context spans (pos, len) and literal tokens. A run of 10^6 context tokens and a short
+        answer costs some tens of bytes instead of 4 MB."""
+        ctx = np.asarray([int(t) for t in ctx], np.int64); ans = [int(t) for t in answer]
+        h_ctx = chain_end(ctx.tolist())
+        ops = encode_copy(ans, ctx, min_copy)
+        sid = self._index_track(len(ctx), h_ctx, src, ops)
+        self._append(K_TRACK, _pack_track(len(ctx), h_ctx, src, ops))
+        return sid
+
+    def track_answer(self, sid: int, ctx):
+        """the answer of a track, decoded against the requester's own context (== the stored one by its hash)."""
+        ctx_len, h_ctx, src, ops = self.tracks[sid]
+        return decode_copy(ops, ctx)
 
     # ---------- anchors (exact model state) ----------
     def has_anchor(self, h: bytes) -> bool:
@@ -248,14 +296,25 @@ class MapFile:
         """-> (lcp, sid, best_anchor_hash, best_anchor_P, hashes of ctx)"""
         hs = chain(ctx)
         lcp, sid = 0, -1
-        lo, hi = 0, len(ctx)                                   # prefix property is monotone: binary search
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if hs[mid] in self.pos_hash:
-                lo = mid
-            else:
-                hi = mid - 1
-        lcp = lo
+        st = self.stride
+        if hs[len(ctx)] in self.pos_hash:                      # the whole context lies on a track
+            lcp = len(ctx)
+        else:
+            lo, hi = 0, len(ctx) // st                         # prefix property is monotone: binary search
+            while lo < hi:                                     # (over the indexed multiples of the stride)
+                mid = (lo + hi + 1) // 2
+                if hs[mid * st] in self.pos_hash:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            lcp = lo * st
+            if st > 1:                                         # a prompt end inside the next stride window
+                for q in range(min(len(ctx), lcp + st - 1), lcp, -1):
+                    if hs[q] in self.pos_hash:
+                        lcp = q
+                        break
+            while lcp + 1 <= len(ctx) and hs[lcp + 1] in self.pos_hash:   # output part: indexed at every position
+                lcp += 1
         if lcp == len(ctx):
             sid = self.gen_hash.get(hs[lcp], -1)               # only a ride where the model itself spoke on from here
         best = 0
@@ -267,6 +326,84 @@ class MapFile:
 
     def size_mb(self) -> float:
         return self.path.stat().st_size / 1e6
+
+
+# ---------- track coding ----------
+def chain_end(tokens, h0: bytes = b"\x00" * 8) -> bytes:
+    """h_P of the whole token sequence (the last element of chain())."""
+    h = h0
+    for t in tokens:
+        h = hashlib.blake2b(h + struct.pack("<I", int(t)), digest_size=8).digest()
+    return h
+
+
+def encode_copy(ans, ctx, min_copy: int = 4):
+    """the answer as copies of context spans (>= min_copy tokens, longest first, greedy) and literal runs."""
+    x = np.asarray(ctx, np.int64); ops, lit, j = [], [], 0
+    while j < len(ans):
+        best = (0, -1)
+        if j + min_copy <= len(ans):
+            c = np.nonzero(x[:len(x) - min_copy + 1] == ans[j])[0]
+            for k in range(1, min_copy):
+                if not len(c):
+                    break
+                c = c[x[c + k] == ans[j + k]]
+            L = min_copy
+            while len(c) and j + L < len(ans):
+                ok = c[c + L < len(x)]
+                nxt = ok[x[ok + L] == ans[j + L]]
+                if not len(nxt):
+                    break
+                c, L = nxt, L + 1
+            if len(c):
+                best = (L, int(c[0]))
+        if best[0] >= min_copy:
+            if lit:
+                ops.append((OP_LIT, lit)); lit = []
+            ops.append((OP_COPY, (best[1], best[0]))); j += best[0]
+        else:
+            lit.append(int(ans[j])); j += 1
+    if lit:
+        ops.append((OP_LIT, lit))
+    return ops
+
+
+def decode_copy(ops, ctx):
+    out = []
+    for k, v in ops:
+        if k == OP_LIT:
+            out += v
+        else:
+            p, L = v
+            out += [int(t) for t in ctx[p:p + L]]
+    return out
+
+
+def _pack_track(ctx_len, h_ctx, src, ops):
+    sb = src.encode()
+    b = [struct.pack("<I", ctx_len), h_ctx, struct.pack("<H", len(sb)), sb, struct.pack("<I", len(ops))]
+    for k, v in ops:
+        if k == OP_LIT:
+            b.append(struct.pack("<BH", OP_LIT, len(v)) + np.asarray(v, np.uint32).tobytes())
+        else:
+            b.append(struct.pack("<BIH", OP_COPY, v[0], v[1]))
+    return b"".join(b)
+
+
+def _unpack_track(buf):
+    ctx_len, = struct.unpack_from("<I", buf, 0); h_ctx = buf[4:12]
+    sl, = struct.unpack_from("<H", buf, 12); src = buf[14:14 + sl].decode(); o = 14 + sl
+    n_ops, = struct.unpack_from("<I", buf, o); o += 4
+    ops = []
+    for _ in range(n_ops):
+        k = buf[o]
+        if k == OP_LIT:
+            cnt, = struct.unpack_from("<H", buf, o + 1)
+            ops.append((OP_LIT, np.frombuffer(buf, np.uint32, cnt, o + 3).tolist())); o += 3 + 4 * cnt
+        else:
+            p, L = struct.unpack_from("<IH", buf, o + 1)
+            ops.append((OP_COPY, (p, L))); o += 7
+    return ctx_len, h_ctx, src, ops
 
 
 # ---------- generic state helpers ----------

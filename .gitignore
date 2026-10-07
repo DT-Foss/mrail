@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.mrail
 .DS_Store
+dist/
+build/
+*.egg-info/

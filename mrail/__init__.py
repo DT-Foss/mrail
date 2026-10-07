@@ -4,7 +4,7 @@ from .drafts import DraftRail
 
 Monorail = MapFile
 __all__ = ["MapFile", "Monorail", "DraftRail", "chain", "snapshot_from_layers", "MAGIC"]
-__version__ = "0.3.0"
+__version__ = "0.4.1"
 
 
 def exact_answer(m: MapFile, ctx, max_new: int, stop=()):
@@ -13,7 +13,10 @@ def exact_answer(m: MapFile, ctx, max_new: int, stop=()):
     if lcp != len(ctx) or sid < 0:
         return None
     out = []
-    for t in m.sessions[sid][len(ctx):len(ctx) + max_new]:
+    seq = m.sessions[sid]
+    if seq is None:                                           # a track: the answer is coded against the context
+        seq = list(ctx) + m.track_answer(sid, ctx)
+    for t in seq[len(ctx):len(ctx) + max_new]:
         out.append(t)
         if t in stop:
             break

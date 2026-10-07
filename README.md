@@ -16,8 +16,18 @@ below): known questions in 3.0–4.3 ms instead of 9.7–10.3 s; 2.54 instead of
 coding tasks with a 1.2 MB coding map of 1 641 runs (2.27× greedy decoding); 8.4 MB instead of 893 MB for the anchors of
 the same runs through delta coding and stations, 9.6 kB for their tokens alone.
 
+**Tracks** (format kind 5, new in 0.4.1) record a run without its context: the context by its chain hash and a source
+name (an eval item, a document id), the model's answer copy-coded against it. On 652 runs of benchmark prompts of 131k
+to 1M tokens the maps shrink from 881.4 MB to 89.5 KB, 143 bytes per run of a million tokens, and every track replays
+its answer identically. Long runs are indexed at every 256th prefix, at the end of the prompt and at every answer
+position (4k hash entries instead of a million for a 1M-token run).
+
 This repository contains the [format specification](SPEC.md) and a dependency-light reference reader and writer
 (Python, numpy). It does not contain a model runtime.
+
+```
+pip install mrail
+```
 
 ```python
 import mrail
@@ -54,4 +64,5 @@ version changes.
 
 Models and maps: [huggingface.co/tfwnotops](https://huggingface.co/tfwnotops).
 
-License: Apache-2.0.
+License: [PolyForm Noncommercial 1.0.0](LICENSE) (see [NOTICE](NOTICE)); commercial use needs a license from the author,
+d.foss@ieee.org. Versions up to 0.3.0 were released under Apache-2.0.
