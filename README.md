@@ -64,5 +64,5 @@ version changes.
 
 Models and maps: [huggingface.co/tfwnotops](https://huggingface.co/tfwnotops).
 
-License: [PolyForm Noncommercial 1.0.0](LICENSE) (see [NOTICE](NOTICE)); commercial use needs a license from the author,
-d.foss@ieee.org. Versions up to 0.3.0 were released under Apache-2.0.
+License: [PolyForm Noncommercial 1.0.0](LICENSE) (see [NOTICE](NOTICE)); commercial licenses: Wirkung Inc.
+(d.foss@ieee.org). Versions up to 0.3.0 were released under Apache-2.0.
