@@ -22,6 +22,17 @@ to 1M tokens the maps shrink from 881.4 MB to 89.5 KB, 143 bytes per run of a mi
 its answer identically. Long runs are indexed at every 256th prefix, at the end of the prompt and at every answer
 position (4k hash entries instead of a million for a 1M-token run).
 
+**0.5.0** keeps the format and adds: the longest known continuation of a context is indexed for tracks as for sessions
+(in memory and after reopening), one draft tree from several rails at once (`mrail.tree_multi`: the map, foreign maps,
+the request's own context, a transferred answer), and the specification of Möbius continuation, storage planes (the map
+is the route plane; exact states are optional) and fingerprint binding.
+
+Measured on a 78B mixture-of-experts transformer (sliding-window and NoPE attention) in a runtime with row-local numerics:
+every map-drafted answer equals the model's greedy answer token for token, draft trees are verified in one pass; a
+repeated request is served in 0.07–0.1 ms without computing; a document with three different questions restores at
+the divergence points and computes 1 403, 425 and 11 prompt tokens; after a restart the reopened map (9 runs, 22 kB)
+serves its tracks again.
+
 This repository contains the [format specification](SPEC.md) and a dependency-light reference reader and writer
 (Python, numpy). It does not contain a model runtime.
 
@@ -35,6 +46,8 @@ m = mrail.MapFile("coding.mrail")                  # opens or creates
 answer = mrail.exact_answer(m, context_tokens, max_new=256, stop={151645})
 m.add_session(prompt_tokens + model_answer_tokens + [next_token], gen_start=len(prompt_tokens))
 tree = m.rail.tree(context_tokens, budget=31)       # draft tree [(token, parent)] for verification
+own = mrail.DraftRail(); own.add(context_tokens)    # the request itself as a rail (prompt lookup)
+tree = mrail.tree_multi([(m.rail, 1.0), (own, 0.5)], context_tokens, budget=31)
 ```
 
 ```

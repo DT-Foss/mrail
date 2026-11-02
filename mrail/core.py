@@ -174,8 +174,12 @@ class MapFile:
         return sid
 
     def _run_len(self, sid):
+        """length of a run: context + the model's own continuation (tracks: decoded op lengths)."""
         s_ = self.sessions[sid]
-        return len(s_) if s_ is not None else self.tracks[sid][0] + 1
+        if s_ is not None:
+            return len(s_)
+        ctx_len, _, _, ops = self.tracks[sid]
+        return ctx_len + sum(len(v) if k == OP_LIT else v[1] for k, v in ops)
 
     # ---------- tracks: runs whose context lives elsewhere ----------
     def _index_track(self, ctx_len, h_ctx, src, ops):
@@ -183,10 +187,12 @@ class MapFile:
         self.sessions.append(None)                             # the context is not stored: src names it, h_ctx checks it
         self.gen_start.append(ctx_len)
         self.tracks[sid] = (ctx_len, h_ctx, src, ops)
-        cur = self.pos_hash.get(h_ctx)
-        if cur is None:
+        cur = self.pos_hash.get(h_ctx)                         # the longest known continuation wins (0.5.0)
+        if cur is None or self._run_len(cur[0]) < self._run_len(sid):
             self.pos_hash[h_ctx] = (sid, ctx_len)
-        self.gen_hash.setdefault(h_ctx, sid)
+        g = self.gen_hash.get(h_ctx)
+        if g is None or self._run_len(g) < self._run_len(sid):
+            self.gen_hash[h_ctx] = sid
         return sid
 
     def add_track(self, ctx, answer, src: str = "", min_copy: int = 4) -> int:

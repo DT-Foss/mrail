@@ -1,10 +1,13 @@
 # The `.mrail` format, version 3
 
-A `.mrail` file is an append-only map of **exact runs of one language model**. It stores what the model has already
+A `.mrail` file is an append-only map of **exact runs of one language model**. (Format version 3; reference library
+0.5.0. Readers of 0.4.x read every 0.5.0 file and vice versa.) It stores what the model has already
 computed, so that a runtime can answer known contexts without running the model, restore exact states at shared
 prefixes, and draft continuations for new contexts. It is designed for models whose state after any prefix has a
 constant size (state-space models, linear attention, gated delta networks, fixed-state attention such as Ward recall),
-where the state is a pure function of the token prefix.
+where the state is a pure function of the token prefix. The same holds for transformer KV caches when the runtime's
+numerics are row-local (a row's result does not depend on chunking, batching or the other rows of a step); such a runtime
+states this as its numeric contract.
 
 All integers are little-endian.
 
@@ -91,3 +94,21 @@ by a binary search over the context's own hash chain against a set of all prefix
    drafts must be verified by the model. Sessions loaded from a foreign map are draft-only.
 4. A map belongs to one exact model (weights, quantisation, runtime numerics up to ties). Anchors additionally assume
    the same first token for all runs when the model's state depends on it (Ward recall's gauge center).
+5. **Longest continuation.** When several runs (sessions or tracks) continue the same context, readers index the longest
+   one, in memory and after reopening the file (0.5.0; 0.4.1 kept the first track).
+6. **Möbius continuation.** A context that leaves every run is not a miss: the runtime restores the best state at or
+   below the longest common prefix (an anchor, or a station it keeps in memory) and computes only the rest; drafts from
+   the map serve the new stretch; the finished run is appended and becomes track for the next request.
+
+## Storage planes
+
+The map's own records (SESSION, TRACK, USE) are the route plane: tokens, prefix relations and the model's own
+continuations, a few bytes per token or tens of bytes per tracked run. Exact states (ANCHOR, DELTA) are a separate,
+optional plane. A runtime may keep its restart points (stations) in memory under a byte budget instead and never write
+them; the map stays small and complete for exact answers, Möbius continuation and drafts.
+
+## Binding a map to its model
+
+A runtime names its own map by a fingerprint of everything that decides an output token (weights, recipe, kernels and
+their numeric contract, answer configuration) and may keep a side file `<map>.json` with that fingerprint. Maps with
+another fingerprint are opened as foreign maps: their runs are drafts only.

@@ -68,5 +68,28 @@ def test_track_copy_coded(tmp_path=None):
     print("track:", size, "bytes for a 200k-token context, answer", len(ans), "tokens")
 
 
+def test_longest_track_continuation():
+    """0.5.0: a longer continuation of the same context replaces a shorter one, also after reopening."""
+    import tempfile, os
+    from mrail import MapFile, exact_answer
+    p = os.path.join(tempfile.mkdtemp(), "l.mrail")
+    ctx = list(range(100, 140))
+    m = MapFile(p)
+    m.add_track(ctx, [5], src="a")
+    m.add_track(ctx, [5, 6, 7, 2], src="a")
+    assert exact_answer(m, ctx, 8, stop={2}) == [5, 6, 7, 2]
+    m2 = MapFile(p)
+    assert exact_answer(m2, ctx, 8, stop={2}) == [5, 6, 7, 2]
+
+
+def test_tree_multi():
+    from mrail import DraftRail, tree_multi
+    a = DraftRail(); a.add([1, 2, 3, 4, 5, 6])
+    b = DraftRail(); b.add([9, 2, 3, 7, 8])
+    t = tree_multi([(a, 1.0), (b, 0.5)], [0, 2, 3], budget=4)
+    assert t[0] == (4, -1)                                         # the heavier rail leads
+    assert (7, -1) in t                                            # the second rail branches
+
+
 if __name__ == "__main__":
     test_track_copy_coded()

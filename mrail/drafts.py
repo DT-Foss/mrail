@@ -118,3 +118,43 @@ class DraftRail:
             for t2, c2 in c[1].items():
                 heapq.heappush(heap, (-c2[0], t2, id(c2), me, c2))
         return out
+
+
+def tree_multi(rails, ctx, budget: int, depth: int = 24, max_entries: int = 24) -> list[tuple[int, int]]:
+    """One draft tree from several rails at once: rails = [(DraftRail, weight)], e.g. the map's own rail, foreign maps
+    (draft-only), the request's own context (prompt lookup) and a transferred answer. All n-gram entry points of all
+    rails vote into one weighted trie; the best-first top-`budget` nodes are returned as (token, parent), parent -1 =
+    child of ctx[-1]. The model verifies the whole tree in one pass; nothing is emitted from a rail."""
+    root = [0.0, {}]
+    for rail, wscale in rails:
+        log, L = rail.log, len(rail.log)
+        for n in range(min(rail.nmax, len(ctx)), 0, -1):
+            occ = rail.idx[n].get(tuple(ctx[-n:]))
+            if not occ:
+                continue
+            w_n = wscale * 4.0 ** n
+            used = 0
+            for pos in reversed(occ):
+                if pos >= L:
+                    continue
+                node, decay = root, 1.0
+                recency = 1.0 + pos / max(L, 1)
+                for t in log[pos:pos + depth]:
+                    child = node[1].get(t)
+                    if child is None:
+                        child = node[1][t] = [0.0, {}]
+                    child[0] += w_n * recency * decay
+                    node, decay = child, decay * 0.92
+                used += 1
+                if used >= max_entries:
+                    break
+    out: list[tuple[int, int]] = []
+    heap = [(-c[0], t, id(c), -1, c) for t, c in root[1].items()]
+    heapq.heapify(heap)
+    while heap and len(out) < budget:
+        negw, t, _, parent, c = heapq.heappop(heap)
+        out.append((t, parent))
+        me = len(out) - 1
+        for t2, c2 in c[1].items():
+            heapq.heappush(heap, (-c2[0], t2, id(c2), me, c2))
+    return out

@@ -1,10 +1,10 @@
 """mrail — append-only maps of exact language-model runs (.mrail v3). See SPEC.md."""
 from .core import MapFile, chain, snapshot_from_layers, MAGIC
-from .drafts import DraftRail
+from .drafts import DraftRail, tree_multi
 
 Monorail = MapFile
-__all__ = ["MapFile", "Monorail", "DraftRail", "chain", "snapshot_from_layers", "MAGIC"]
-__version__ = "0.4.1"
+__all__ = ["MapFile", "Monorail", "DraftRail", "tree_multi", "chain", "snapshot_from_layers", "MAGIC", "exact_answer"]
+__version__ = "0.5.0"
 
 
 def exact_answer(m: MapFile, ctx, max_new: int, stop=()):
